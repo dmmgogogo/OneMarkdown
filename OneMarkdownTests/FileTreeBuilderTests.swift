@@ -46,11 +46,12 @@ final class FileTreeBuilderTests: XCTestCase {
         XCTAssertEqual(names(result.root), ["File1.md", "file2.md", "file10.md"])
     }
 
-    func testDepthLimit() throws {
+    func testDepthLimitPrunesSilently() throws {
         try touch("1/2/3/deep.md")
         try touch("top.md")
         let result = FileTreeBuilder.build(root: root, limits: .init(maxDepth: 2, maxNodes: 5000))
-        XCTAssertTrue(result.truncated)
+        // 层级过深只静默剪掉，不算“截断”，否则 Downloads 这类目录每次刷新都会弹警告
+        XCTAssertFalse(result.truncated)
         XCTAssertEqual(names(result.root), ["top.md"])
     }
 

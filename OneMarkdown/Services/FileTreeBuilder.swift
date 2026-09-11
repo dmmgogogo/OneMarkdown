@@ -10,7 +10,7 @@ nonisolated enum FileTreeBuilder {
 
     struct Result: Sendable {
         let root: FileNode
-        /// 是否因超出上限而截断。
+        /// 是否因文件数超过 maxNodes 而截断（层级过深被跳过不算，那是正常的静默剪枝）。
         let truncated: Bool
         /// 根目录本身无法枚举（不存在 / 无权限）时的错误描述。
         let rootError: String?
@@ -47,7 +47,8 @@ nonisolated enum FileTreeBuilder {
         _ url: URL, depth: Int, limits: Limits,
         budget: inout Int, truncated: inout Bool, visited: inout Set<String>
     ) -> FileNode? {
-        guard depth <= limits.maxDepth else { truncated = true; return nil }
+        // 超过最大层级静默跳过：Downloads 之类的目录里嵌套很深的工程很常见，不值得每次都警告
+        guard depth <= limits.maxDepth else { return nil }
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey, .isHiddenKey]
         // 用路径版 API：URL 版 contentsOfDirectory(at:) 不会跟随指向目录的符号链接（直接报“无法打开”）

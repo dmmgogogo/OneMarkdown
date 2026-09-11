@@ -66,6 +66,8 @@ final class WorkspaceViewModel {
     private var loadGeneration = 0
     private var treeGeneration = 0
     private var bannerDismissTask: Task<Void, Never>?
+    /// 已对哪个根目录提示过“文件过多”，避免每次刷新都弹
+    private var truncationWarnedRoot: URL?
 
     // MARK: - 派生
 
@@ -180,8 +182,9 @@ final class WorkspaceViewModel {
             isBuildingTree = false
             if let rootError = result.rootError {
                 show(.error, "无法读取“\(root.lastPathComponent)”：\(rootError)")
-            } else if result.truncated {
-                show(.warning, "目录过大，仅显示前 \(FileTreeBuilder.Limits.default.maxNodes) 项")
+            } else if result.truncated, truncationWarnedRoot != root {
+                truncationWarnedRoot = root
+                show(.info, "“\(root.lastPathComponent)”里的 Markdown 文件超过 \(FileTreeBuilder.Limits.default.maxNodes) 个，侧栏只列出前 \(FileTreeBuilder.Limits.default.maxNodes) 个")
             }
         }
     }
