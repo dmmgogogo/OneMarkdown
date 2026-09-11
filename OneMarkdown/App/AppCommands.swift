@@ -19,6 +19,12 @@ struct AppCommands: Commands {
             Button("在 Finder 中显示") { viewModel.revealInFinder() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(!viewModel.hasDocument && viewModel.rootFolder == nil)
+            Divider()
+            Button("重命名…") { if let url = viewModel.fileOperationTarget { viewModel.beginRename(url) } }
+                .disabled(viewModel.fileOperationTarget == nil)
+            Button("移到废纸篓") { if let url = viewModel.fileOperationTarget { viewModel.beginTrash(url) } }
+                .keyboardShortcut(.delete, modifiers: .command)
+                .disabled(viewModel.fileOperationTarget == nil)
         }
 
         CommandGroup(replacing: .printItem) {

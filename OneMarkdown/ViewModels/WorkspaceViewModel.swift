@@ -35,6 +35,12 @@ final class WorkspaceViewModel {
     var banner: Banner?
     var filterText = ""
 
+    /// 右键“重命名…”弹窗的目标与输入框内容
+    var renameTarget: URL?
+    var renameText = ""
+    /// 右键“移到废纸篓”确认弹窗的目标
+    var trashTarget: URL?
+
     var sidebarMode: SidebarMode {
         didSet { UserDefaults.standard.set(sidebarMode.rawValue, forKey: PrefKey.sidebarMode) }
     }
@@ -217,6 +223,111 @@ final class WorkspaceViewModel {
     func copyPath(_ url: URL) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.path, forType: .string)
+    }
+
+    // MARK: - 文件操作（重命名 / 移到废纸篓）
+
+    /// 菜单栏“重命名 / 移到废纸篓”作用的对象：侧栏选中项优先，否则当前文档。
+    var fileOperationTarget: URL? {
+        if let selected = selectedNodeID, FileManager.default.fileExists(atPath: selected.path) { return selected }
+        return currentDocument?.url
+    }
+
+    func beginRename(_ url: URL) {
+        renameText = url.lastPathComponent
+        renameTarget = url
+    }
+
+    func cancelRename() {
+        renameTarget = nil
+        renameText = ""
+    }
+
+    /// 弹窗确认后执行重命名。失败以 banner 提示，不抛出。
+    func commitRename() {
+        guard let source = renameTarget else { return }
+        let newName = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        cancelRename()
+        guard !newName.isEmpty, newName != source.lastPathComponent else { return }
+        guard !newName.contains("/"), !newName.contains(":"), newName != ".", newName != ".." else {
+            show(.error, "名称不能包含“/”或“:”")
+            return
+        }
+        let destination = source.deletingLastPathComponent().appendingPathComponent(newName)
+        let fm = FileManager.default
+        // 大小写不敏感的卷上，仅改大小写时 fileExists 会对自身返回 true，要放行
+        let onlyCaseChanged = destination.path.lowercased() == source.path.lowercased()
+        if !onlyCaseChanged, fm.fileExists(atPath: destination.path) {
+            show(.error, "“\(newName)”已存在")
+            return
+        }
+        do {
+            try fm.moveItem(at: source, to: destination)
+        } catch {
+            show(.error, "重命名失败：\(error.localizedDescription)")
+            return
+        }
+        // 当前文档就是被改名的文件、或位于被改名的目录下：切到新路径继续显示
+        if let doc = currentDocument, let relocated = Self.relocate(doc.url, from: source, to: destination) {
+            loadDocument(relocated, preserveScroll: true)
+            selectedNodeID = relocated
+        } else if selectedNodeID == source {
+            selectedNodeID = destination
+        }
+        refreshTree()
+    }
+
+    func beginTrash(_ url: URL) {
+        trashTarget = url
+    }
+
+    func cancelTrash() {
+        trashTarget = nil
+    }
+
+    /// 弹窗确认后移到废纸篓。
+    func commitTrash() {
+        guard let target = trashTarget else { return }
+        cancelTrash()
+        do {
+            try FileManager.default.trashItem(at: target, resultingItemURL: nil)
+        } catch {
+            show(.error, "移到废纸篓失败：\(error.localizedDescription)")
+            return
+        }
+        if let doc = currentDocument, Self.isInside(doc.url, of: target) {
+            closeDocument()
+        }
+        if let selected = selectedNodeID, Self.isInside(selected, of: target) {
+            selectedNodeID = nil
+        }
+        show(.info, "已将“\(target.lastPathComponent)”移到废纸篓")
+        refreshTree()
+    }
+
+    /// 关闭当前文档，回到空状态（文件被本 App 删除时使用）。
+    func closeDocument() {
+        fileWatcher?.stop()
+        fileWatcher = nil
+        currentDocument = nil
+        outline = []
+        selectedOutlineID = nil
+        if isFindVisible { closeFind() }
+    }
+
+    /// `url` 等于 `base` 或位于其下。
+    private static func isInside(_ url: URL, of base: URL) -> Bool {
+        relocate(url, from: base, to: base) != nil
+    }
+
+    /// 若 `url` 等于 `oldBase` 或位于其下，返回把前缀替换为 `newBase` 后的路径；否则返回 nil。
+    private static func relocate(_ url: URL, from oldBase: URL, to newBase: URL) -> URL? {
+        let path = url.standardizedFileURL.path
+        let oldPath = oldBase.standardizedFileURL.path
+        if path == oldPath { return newBase }
+        guard path.hasPrefix(oldPath + "/") else { return nil }
+        let rest = String(path.dropFirst(oldPath.count + 1))
+        return newBase.appendingPathComponent(rest)
     }
 
     // MARK: - 缩放

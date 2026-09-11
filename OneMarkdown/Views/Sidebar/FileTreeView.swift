@@ -66,6 +66,20 @@ struct FileTreeView: View {
         .onChange(of: vm.selectedNodeID) { _, id in
             vm.select(nodeID: id)
         }
+        .alert("重命名", isPresented: Binding(get: { vm.renameTarget != nil }, set: { if !$0 { vm.cancelRename() } })) {
+            TextField("名称", text: $vm.renameText)
+            Button("重命名") { vm.commitRename() }
+                .keyboardShortcut(.defaultAction)
+            Button("取消", role: .cancel) { vm.cancelRename() }
+        } message: {
+            Text("输入新名称（含扩展名）")
+        }
+        .alert("移到废纸篓", isPresented: Binding(get: { vm.trashTarget != nil }, set: { if !$0 { vm.cancelTrash() } })) {
+            Button("移到废纸篓", role: .destructive) { vm.commitTrash() }
+            Button("取消", role: .cancel) { vm.cancelTrash() }
+        } message: {
+            Text("确定要把“\(vm.trashTarget?.lastPathComponent ?? "")”移到废纸篓吗？\n可以在废纸篓中找回。")
+        }
     }
 
     @ViewBuilder
@@ -87,9 +101,11 @@ struct FileTreeView: View {
         Button("在 Finder 中显示") { vm.revealInFinder(node.url) }
         Button("拷贝路径") { vm.copyPath(node.url) }
         if node.isDirectory {
-            Divider()
             Button("设为根目录") { vm.openFolder(node.url) }
         }
+        Divider()
+        Button("重命名…") { vm.beginRename(node.url) }
+        Button("移到废纸篓") { vm.beginTrash(node.url) }
     }
 
     private func placeholder(_ text: String) -> some View {
