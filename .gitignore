@@ -1,0 +1,8 @@
+build/
+dist/
+*.xcodeproj
+xcuserdata/
+.DS_Store
+*.swp
+!/scripts/
+!/OneMarkdown/App/

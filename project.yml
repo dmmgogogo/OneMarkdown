@@ -1,0 +1,107 @@
+name: OneMarkdown
+options:
+  bundleIdPrefix: com.iamxmm
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: NO
+
+targets:
+  OneMarkdown:
+    type: application
+    platform: macOS
+    sources:
+      - path: OneMarkdown
+        excludes:
+          - "Resources/Renderer"
+      - path: OneMarkdown/Resources/Renderer
+        type: folder
+        buildPhase: resources
+    info:
+      path: OneMarkdown/Resources/Info.plist
+      properties:
+        CFBundleName: OneMarkdown
+        CFBundleDisplayName: OneMarkdown
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
+        CFBundleAllowMixedLocalizations: true
+        NSPrincipalClass: NSApplication
+        LSMinimumSystemVersion: "14.0"
+        LSApplicationCategoryType: public.app-category.productivity
+        NSHumanReadableCopyright: "Copyright © 2026 iamxmm. All rights reserved."
+        NSHighResolutionCapable: true
+        NSSupportsAutomaticTermination: false
+        NSSupportsSuddenTermination: false
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInWebContent: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Markdown
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Default
+            LSItemContentTypes:
+              - net.daringfireball.markdown
+            CFBundleTypeExtensions: [md, markdown, mdown, mkd, mkdn, mdwn, mdtxt, mdtext, rmd, qmd, mdx]
+          - CFBundleTypeName: Folder
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.folder
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: net.daringfireball.markdown
+            UTTypeDescription: Markdown
+            UTTypeConformsTo: [public.plain-text]
+            UTTypeTagSpecification:
+              public.filename-extension: [md, markdown, mdown, mkd, mkdn, mdwn, mdtxt, mdtext, rmd, qmd, mdx]
+              public.mime-type: [text/markdown]
+    settings:
+      base:
+        PRODUCT_NAME: OneMarkdown
+        PRODUCT_BUNDLE_IDENTIFIER: com.iamxmm.onemarkdown
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: NO
+        COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+        DEAD_CODE_STRIPPING: YES
+
+  OneMarkdownTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [OneMarkdownTests]
+    dependencies:
+      - target: OneMarkdown
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/OneMarkdown.app/Contents/MacOS/OneMarkdown"
+
+schemes:
+  OneMarkdown:
+    build:
+      targets:
+        OneMarkdown: all
+        OneMarkdownTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [OneMarkdownTests]
+    archive:
+      config: Release
