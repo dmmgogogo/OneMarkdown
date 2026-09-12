@@ -108,6 +108,23 @@ final class FileTreeBuilderTests: XCTestCase {
         XCTAssertEqual(result.root.children?.count, 0)
     }
 
+    func testListDirectoryIsShallowAndKeepsAllFolders() throws {
+        try touch("b.md")
+        try touch("notes.txt")
+        try touch("docs/inner.md")
+        try touch("empty-dir/only.txt")          // 没有 md 的目录也要显示（展开后才知道）
+        try touch("node_modules/pkg/readme.md")  // 忽略目录不显示
+        try touch(".hidden/secret.md")
+        let nodes = try FileTreeBuilder.listDirectory(root)
+        XCTAssertEqual(nodes.map(\.name), ["docs", "empty-dir", "b.md"])
+        // 只读一层：目录节点不带子节点内容
+        XCTAssertEqual(nodes.first?.children?.count, 0)
+    }
+
+    func testListDirectoryUnreadableThrows() {
+        XCTAssertThrowsError(try FileTreeBuilder.listDirectory(root.appendingPathComponent("nope")))
+    }
+
     func testFilter() throws {
         try touch("readme.md")
         try touch("docs/guide-Install.md")

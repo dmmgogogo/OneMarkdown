@@ -26,14 +26,22 @@ final class WorkspaceViewModel {
     // MARK: - 状态
 
     private(set) var rootFolder: URL?
-    private(set) var tree: FileNode?
-    private(set) var isBuildingTree = false
+    /// 已读取的目录内容（按层懒加载），键为 standardizedFileURL
+    private(set) var directoryContents: [URL: [FileNode]] = [:]
+    private(set) var loadingDirectories: Set<URL> = []
+    /// 侧栏里展开的目录
+    private(set) var expandedDirectories: Set<URL> = []
+    /// 搜索结果（文件名过滤，需要全目录扫描，只在输入时触发）
+    private(set) var searchResults: [FileNode] = []
+    private(set) var isSearching = false
     private(set) var currentDocument: MarkdownDocument?
     private(set) var outline: [OutlineItem] = []
     var selectedNodeID: URL?
     var selectedOutlineID: String?
     var banner: Banner?
-    var filterText = ""
+    var filterText = "" {
+        didSet { if filterText != oldValue { runSearch() } }
+    }
 
     /// 右键“重命名…”弹窗的目标与输入框内容
     var renameTarget: URL?
@@ -62,12 +70,14 @@ final class WorkspaceViewModel {
     let recents = RecentFilesStore()
 
     private var fileWatcher: FileWatcher?
-    private var folderWatcher: FileWatcher?
+    /// 根目录与已展开目录各挂一个监听，目录内容变化时只重读那一层
+    private var directoryWatchers: [URL: FileWatcher] = [:]
     private var loadGeneration = 0
-    private var treeGeneration = 0
+    private var directoryGenerations: [URL: Int] = [:]
+    private var searchGeneration = 0
+    /// 搜索用的全目录索引，按根目录缓存；目录有变化时失效
+    private var searchIndex: (root: URL, tree: FileNode, truncated: Bool)?
     private var bannerDismissTask: Task<Void, Never>?
-    /// 已对哪个根目录提示过“文件过多”，避免每次刷新都弹
-    private var truncationWarnedRoot: URL?
 
     // MARK: - 派生
 
@@ -75,9 +85,27 @@ final class WorkspaceViewModel {
     var documentSubtitle: String { currentDocument?.directoryURL.lastPathComponent ?? "" }
     var hasDocument: Bool { currentDocument != nil }
 
-    var filteredFiles: [FileNode] {
-        guard let tree else { return [] }
-        return FileTreeBuilder.filter(tree, query: filterText)
+    /// 根目录这一层的内容；nil 表示还没读到
+    var rootChildren: [FileNode]? {
+        guard let rootFolder else { return nil }
+        return directoryContents[Self.key(rootFolder)]
+    }
+
+    var isLoadingRoot: Bool {
+        guard let rootFolder else { return false }
+        return rootChildren == nil && loadingDirectories.contains(Self.key(rootFolder))
+    }
+
+    func children(of directory: URL) -> [FileNode]? {
+        directoryContents[Self.key(directory)]
+    }
+
+    func isExpanded(_ directory: URL) -> Bool {
+        expandedDirectories.contains(Self.key(directory))
+    }
+
+    private static func key(_ url: URL) -> URL {
+        url.standardizedFileURL
     }
 
     func relativePath(of url: URL) -> String {
@@ -119,24 +147,33 @@ final class WorkspaceViewModel {
             return
         }
         loadDocument(url, preserveScroll: false)
-        // 文件不在当前根目录下时，把根目录切到它的父目录（Typora 行为）
+        // 文件不在当前根目录下时，把根目录切到它的父目录（Typora 行为）；只读这一层，不递归
         let parent = url.deletingLastPathComponent()
         if let rootFolder, url.standardizedFileURL.path.hasPrefix(rootFolder.standardizedFileURL.path + "/") {
             selectedNodeID = url
+            revealInTree(url)
         } else {
             openFolder(parent, selecting: url)
         }
     }
 
     func openFolder(_ url: URL, selecting: URL? = nil) {
-        if rootFolder?.standardizedFileURL != url.standardizedFileURL {
-            tree = nil   // 换根目录时立刻清掉旧树，避免构建期间还能点到旧文件夹的条目
+        if rootFolder.map(Self.key) != Self.key(url) {
+            // 换根目录：清掉旧目录缓存、展开状态和监听
+            directoryContents = [:]
+            expandedDirectories = []
+            loadingDirectories = []
+            directoryGenerations = [:]
+            searchIndex = nil
+            directoryWatchers.values.forEach { $0.stop() }
+            directoryWatchers = [:]
         }
         rootFolder = url
         selectedNodeID = selecting
         filterText = ""
-        watchFolder(url)
-        refreshTree()
+        watchDirectory(url)
+        loadDirectory(url)
+        if let selecting { revealInTree(selecting) }
     }
 
     func openAll(_ urls: [URL]) {
@@ -163,29 +200,95 @@ final class WorkspaceViewModel {
         bridge.scrollToHeading(id: item.id)
     }
 
-    // MARK: - 文件树
+    // MARK: - 文件树（按层懒加载）
 
-    func refreshTree() {
-        guard let root = rootFolder else {
-            tree = nil
-            return
-        }
-        treeGeneration += 1
-        let gen = treeGeneration
-        isBuildingTree = tree == nil
+    /// 读取某个目录这一层的内容。已有缓存且 `force == false` 时不重复读。
+    func loadDirectory(_ directory: URL, force: Bool = false) {
+        let key = Self.key(directory)
+        if !force, directoryContents[key] != nil || loadingDirectories.contains(key) { return }
+        let gen = (directoryGenerations[key] ?? 0) + 1
+        directoryGenerations[key] = gen
+        loadingDirectories.insert(key)
         Task {
             let result = await Task.detached(priority: .userInitiated) {
-                FileTreeBuilder.build(root: root)
+                Result { try FileTreeBuilder.listDirectory(key) }
             }.value
-            guard gen == treeGeneration else { return }
-            tree = result.root
-            isBuildingTree = false
+            guard directoryGenerations[key] == gen else { return }
+            loadingDirectories.remove(key)
+            switch result {
+            case .success(let nodes):
+                directoryContents[key] = nodes
+            case .failure(let error):
+                directoryContents[key] = []
+                show(.error, "无法读取“\(directory.lastPathComponent)”：\(FileTreeBuilder.describe(error))")
+            }
+        }
+    }
+
+    func setExpanded(_ directory: URL, _ expanded: Bool) {
+        let key = Self.key(directory)
+        if expanded {
+            expandedDirectories.insert(key)
+            loadDirectory(key)
+            watchDirectory(key)
+        } else {
+            expandedDirectories.remove(key)
+            directoryWatchers.removeValue(forKey: key)?.stop()
+        }
+    }
+
+    /// 重新读取根目录和所有已展开目录这几层（刷新按钮、重命名/删除之后）。
+    func refreshTree() {
+        guard let rootFolder else { return }
+        searchIndex = nil
+        loadDirectory(rootFolder, force: true)
+        for dir in expandedDirectories { loadDirectory(dir, force: true) }
+        if !filterText.isEmpty { runSearch() }
+    }
+
+    /// 展开从根目录到 `url` 之间的所有祖先目录，让它在侧栏里可见。
+    private func revealInTree(_ url: URL) {
+        guard let rootFolder else { return }
+        let rootPath = Self.key(rootFolder).path
+        var dir = Self.key(url).deletingLastPathComponent()
+        var ancestors: [URL] = []
+        while dir.path.hasPrefix(rootPath + "/") {
+            ancestors.append(dir)
+            dir = dir.deletingLastPathComponent()
+        }
+        for ancestor in ancestors { setExpanded(ancestor, true) }
+    }
+
+    // MARK: - 搜索（需要全目录扫描，只在输入时做一次并缓存）
+
+    private func runSearch() {
+        let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let root = rootFolder, !query.isEmpty else {
+            searchResults = []
+            isSearching = false
+            return
+        }
+        if let index = searchIndex, index.root == Self.key(root) {
+            searchResults = FileTreeBuilder.filter(index.tree, query: query)
+            return
+        }
+        searchGeneration += 1
+        let gen = searchGeneration
+        isSearching = true
+        let rootKey = Self.key(root)
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                FileTreeBuilder.build(root: rootKey)
+            }.value
+            guard gen == searchGeneration else { return }
+            isSearching = false
+            searchIndex = (rootKey, result.root, result.truncated)
             if let rootError = result.rootError {
                 show(.error, "无法读取“\(root.lastPathComponent)”：\(rootError)")
-            } else if result.truncated, truncationWarnedRoot != root {
-                truncationWarnedRoot = root
-                show(.info, "“\(root.lastPathComponent)”里的 Markdown 文件超过 \(FileTreeBuilder.Limits.default.maxNodes) 个，侧栏只列出前 \(FileTreeBuilder.Limits.default.maxNodes) 个")
+            } else if result.truncated {
+                show(.info, "目录里的 Markdown 文件超过 \(FileTreeBuilder.Limits.default.maxNodes) 个，搜索只覆盖前 \(FileTreeBuilder.Limits.default.maxNodes) 个")
             }
+            searchResults = FileTreeBuilder.filter(result.root, query: filterText.trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 
@@ -498,19 +601,29 @@ final class WorkspaceViewModel {
         fileWatcher?.start()
     }
 
-    private func watchFolder(_ url: URL) {
-        if folderWatcher?.url == url { return }
-        folderWatcher?.stop()
-        folderWatcher = FileWatcher(url: url, isDirectory: true, debounce: .milliseconds(300)) { [weak self] event in
+    private func watchDirectory(_ url: URL) {
+        let key = Self.key(url)
+        if directoryWatchers[key] != nil { return }
+        let watcher = FileWatcher(url: key, isDirectory: true, debounce: .milliseconds(300)) { [weak self] event in
             guard let self else { return }
+            searchIndex = nil
             switch event {
             case .modified, .recreated:
-                refreshTree()
+                loadDirectory(key, force: true)
+                if !filterText.isEmpty { runSearch() }
             case .removed:
-                tree = nil
-                show(.warning, "文件夹已被删除或移动")
+                if key == rootFolder.map(Self.key) {
+                    directoryContents = [:]
+                    show(.warning, "文件夹已被删除或移动")
+                } else {
+                    directoryContents.removeValue(forKey: key)
+                    expandedDirectories.remove(key)
+                    directoryWatchers.removeValue(forKey: key)?.stop()
+                    if let parent = Optional(key.deletingLastPathComponent()) { loadDirectory(parent, force: true) }
+                }
             }
         }
-        folderWatcher?.start()
+        watcher.start()
+        directoryWatchers[key] = watcher
     }
 }

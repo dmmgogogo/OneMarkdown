@@ -29,16 +29,52 @@ nonisolated enum FileTreeBuilder {
         return Result(root: node ?? FileNode(url: root, isDirectory: true, children: []), truncated: truncated, rootError: nil)
     }
 
+    /// 只列出一层：非隐藏、非忽略的目录（不判断里面有没有 Markdown）+ Markdown 文件，目录在前、Finder 顺序。
+    /// 侧栏按需展开时用，避免打开一个文件就递归扫描整棵目录树。
+    static func listDirectory(_ url: URL) throws -> [FileNode] {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey, .isHiddenKey]
+        let names = try fm.contentsOfDirectory(atPath: url.path)
+        var dirs: [FileNode] = []
+        var files: [FileNode] = []
+        for name in names {
+            if name.hasPrefix(".") { continue }
+            let entry = url.appendingPathComponent(name)
+            let values = try? entry.resourceValues(forKeys: Set(keys))
+            if values?.isHidden == true || values?.isPackage == true { continue }
+            var isDir = values?.isDirectory ?? false
+            if values?.isSymbolicLink == true {
+                var targetIsDir: ObjCBool = false
+                guard fm.fileExists(atPath: entry.resolvingSymlinksInPath().path, isDirectory: &targetIsDir) else { continue }
+                isDir = targetIsDir.boolValue
+            }
+            if isDir {
+                if MarkdownFileTypes.ignoredDirectoryNames.contains(name) { continue }
+                dirs.append(FileNode(url: entry, isDirectory: true, children: []))
+            } else if MarkdownFileTypes.isMarkdown(entry) {
+                files.append(FileNode(url: entry, isDirectory: false))
+            }
+        }
+        dirs.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        files.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return dirs + files
+    }
+
+    /// 把枚举错误翻译成用户可读的提示。
+    static func describe(_ error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain, nsError.code == NSFileReadNoPermissionError {
+            return "没有读取该文件夹的权限，请在“系统设置 › 隐私与安全性 › 文件和文件夹”中允许 OneMarkdown"
+        }
+        return error.localizedDescription
+    }
+
     private static func probe(_ url: URL) -> String? {
         do {
             _ = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [])
             return nil
         } catch {
-            let nsError = error as NSError
-            if nsError.domain == NSCocoaErrorDomain, nsError.code == NSFileReadNoPermissionError {
-                return "没有读取该文件夹的权限，请在“系统设置 › 隐私与安全性 › 文件和文件夹”中允许 OneMarkdown"
-            }
-            return error.localizedDescription
+            return describe(error)
         }
     }
 
