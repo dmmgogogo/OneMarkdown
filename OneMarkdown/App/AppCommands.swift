@@ -16,6 +16,10 @@ struct AppCommands: Commands {
             Button("重新加载") { viewModel.reload() }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(!viewModel.hasDocument)
+            Button(editorMenuTitle) { viewModel.openInExternalEditor() }
+                .keyboardShortcut("e", modifiers: .command)
+                .disabled(viewModel.externalEditTarget == nil)
+            Button("选择编辑器…") { viewModel.chooseExternalEditor() }
             Button("在 Finder 中显示") { viewModel.revealInFinder() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(!viewModel.hasDocument && viewModel.rootFolder == nil)
@@ -66,6 +70,12 @@ struct AppCommands: Commands {
             Button("实际大小") { viewModel.zoomReset() }
                 .keyboardShortcut("0", modifiers: .command)
         }
+    }
+
+    /// 选过编辑器就把名字写进菜单，没选过则提示要先选。
+    private var editorMenuTitle: String {
+        if let name = viewModel.editors.editorName { return "用 \(name) 打开" }
+        return "用编辑器打开…"
     }
 
     private var recentMenu: some View {

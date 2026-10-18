@@ -177,6 +177,9 @@ private struct FileNodeContextMenu: View {
     let node: FileNode
 
     var body: some View {
+        if !node.isDirectory {
+            Button("用编辑器打开") { vm.openInExternalEditor(node.url) }
+        }
         Button("在 Finder 中显示") { vm.revealInFinder(node.url) }
         Button("拷贝路径") { vm.copyPath(node.url) }
         if node.isDirectory {

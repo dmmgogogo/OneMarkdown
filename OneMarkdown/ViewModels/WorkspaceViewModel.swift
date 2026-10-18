@@ -68,6 +68,7 @@ final class WorkspaceViewModel {
 
     let bridge = RendererBridge()
     let recents = RecentFilesStore()
+    let editors = ExternalEditorStore()
 
     private var fileWatcher: FileWatcher?
     /// 根目录与已展开目录各挂一个监听，目录内容变化时只重读那一层
@@ -329,6 +330,69 @@ final class WorkspaceViewModel {
     func copyPath(_ url: URL) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.path, forType: .string)
+    }
+
+    // MARK: - 外部编辑器
+
+    /// 菜单栏“用编辑器打开”作用的对象：侧栏选中的文件优先，否则当前文档。
+    /// 选中项是目录或已失效时回退到当前文档，与 `fileOperationTarget` 保持一致。
+    var externalEditTarget: URL? {
+        if let selected = selectedNodeID, isExistingFile(selected) { return selected }
+        return currentDocument?.url
+    }
+
+    /// 交给外部编辑器编辑。保存后 FileWatcher 会自动重载，滚动位置保持不变。
+    /// 没选过编辑器（或编辑器已被卸载）时先让用户选一次。
+    func openInExternalEditor(_ url: URL? = nil) {
+        guard let target = url ?? externalEditTarget else { return }
+        guard FileManager.default.fileExists(atPath: target.path) else {
+            show(.error, "“\(target.lastPathComponent)”不存在或已被移动")
+            return
+        }
+        guard let editor = editors.editorURL else {
+            chooseExternalEditor(thenOpen: target)
+            return
+        }
+        launch(editor: editor, with: target)
+    }
+
+    /// 选择外部编辑器；`thenOpen` 不为空时选完立刻用它打开。
+    func chooseExternalEditor(thenOpen target: URL? = nil) {
+        let panel = NSOpenPanel()
+        panel.message = "选择用来编辑 Markdown 的程序"
+        panel.prompt = "选择"
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        guard panel.runModal() == .OK, let app = panel.url else { return }
+        guard Bundle(url: app)?.bundleIdentifier?.isEmpty == false else {
+            show(.error, "无法识别“\(app.lastPathComponent)”，换一个程序试试")
+            return
+        }
+        guard editors.remember(app) else {
+            show(.error, "不能把 OneMarkdown 自己设为编辑器")
+            return
+        }
+        if let target { launch(editor: app, with: target) }
+    }
+
+    private func launch(editor: URL, with target: URL) {
+        let name = editors.editorName ?? editor.deletingPathExtension().lastPathComponent
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.open([target], withApplicationAt: editor, configuration: config) { [weak self] _, error in
+            guard let error else { return }
+            Task { @MainActor in
+                self?.show(.error, "用\(name)打开失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func isExistingFile(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return false }
+        return !isDir.boolValue
     }
 
     // MARK: - 文件操作（重命名 / 移到废纸篓）

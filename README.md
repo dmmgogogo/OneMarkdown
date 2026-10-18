@@ -1,6 +1,8 @@
 # OneMarkdown
 
-macOS 原生的 **只读 Markdown 查看器**，替代 Typora 的「看文档」场景：GitHub 风格渲染、代码高亮、表格、任务列表、脚注、侧栏文件树与大纲、文件变更自动刷新、明暗跟随系统。不做编辑。
+macOS 原生的 **只读 Markdown 查看器**，替代 Typora 的「看文档」场景：GitHub 风格渲染、代码高亮、表格、任务列表、脚注、侧栏文件树与大纲、文件变更自动刷新、明暗跟随系统。
+
+自身不做编辑，但可以 ⌘E 把当前文档交给你惯用的编辑器；在那边保存后这里自动刷新，滚动位置不变——「边看边改」靠两个窗口配合完成。
 
 - 系统要求：macOS 14.0+，Apple Silicon（可用 `--universal` 出 Intel 兼容版）
 - 技术栈：SwiftUI + AppKit 壳，`WKWebView` + markdown-it / highlight.js / DOMPurify 本地渲染，运行时不联网
@@ -15,6 +17,7 @@ macOS 原生的 **只读 Markdown 查看器**，替代 Typora 的「看文档」
 | 文件名过滤 | 侧栏搜索框（首次输入时扫描整个根目录并缓存） |
 | 正文查找 | ⌘F，⌘G / ⌘⇧G 上下一个，Esc 关闭 |
 | 重新加载 | ⌘R（文件被外部修改时会自动刷新，含 vim / VS Code 的原子替换写入） |
+| 用编辑器打开 | ⌘E，或侧栏右键。首次使用时选一次编辑器（VS Code / Typora / Zed…），之后记住。文件 › 选择编辑器… 可改 |
 | 缩放 | ⌘+ / ⌘- / ⌘0 |
 | 链接 | 外链走系统浏览器；相对 `.md` 链接 App 内打开；`#锚点` 页内跳转 |
 | 最近打开 | 文件 › 最近打开 |
@@ -61,7 +64,7 @@ OneMarkdown 注册为 Markdown 的「可选」打开程序（不主动抢默认�
 OneMarkdown/
 ├── App/            App 入口、AppDelegate、菜单命令、全局状态
 ├── Models/         FileNode / OutlineItem / MarkdownDocument / BridgeMessage
-├── Services/       DocumentLoader（编码回退、大小与二进制探测）、FileTreeBuilder、FileWatcher、RecentFilesStore
+├── Services/       DocumentLoader（编码回退、大小与二进制探测）、FileTreeBuilder、FileWatcher、RecentFilesStore、ExternalEditorStore
 ├── ViewModels/     WorkspaceViewModel（根目录、当前文档、大纲、查找、监听编排）
 ├── Rendering/      RendererBridge（WKWebView、Swift↔JS 桥、导航策略、打印）
 ├── Views/          主窗口、侧栏、内容区、查找条、提示条
